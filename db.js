@@ -12,7 +12,7 @@ async function connect() {
   if (db) return db;
 
   const uri = process.env.MONGODB_URI || 'mongodb://localhost:27017';
-  const dbName = process.env.MONGODB_DB || 'wa_cli';
+  const dbName = process.env.MONGODB_DB || 'whatsapp';
 
   client = new MongoClient(uri, {
     maxPoolSize: 10,

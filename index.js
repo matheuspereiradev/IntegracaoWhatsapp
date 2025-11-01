@@ -38,8 +38,7 @@ function ensureDirSync(dir) {
 
 function sanitizeName(name) {
   return String(name || '')
-    .replace(/[\\/:*?"<>|]+/g, '_')
-    .replace(/\s+/g, ' ')
+    .replaceAll(/[^a-zA-Z0-9]/g, '')
     .trim();
 }
 
@@ -307,6 +306,9 @@ client.on('message', async (msg) => {
     const chat = await msg.getChat();
     const contact = await msg.getContact();
 
+    if(msg.type==="notification_template")
+      return
+
     const who =
       contact?.pushname ||
       contact?.name ||
@@ -360,7 +362,7 @@ client.on('message', async (msg) => {
 
     let savedPath = null;
     if (['image', 'audio', 'ptt', 'video', 'document'].includes(type)) {
-      savedPath = await saveMediaMessage(msg, chat, who);
+      savedPath = await saveMediaMessage(msg, chat, msg.from);
     }
 
     await saveMessage({
@@ -464,7 +466,7 @@ client.on('message_create', async (msg) => {
     let savedPath = null;
     if (['image', 'audio', 'ptt', 'video', 'document'].includes(type)) {
       try {
-        savedPath = await saveMediaMessage(msg, chat, destinoNome);
+        savedPath = await saveMediaMessage(msg, chat, msg.from);
       } catch (e) {
         console.warn('[MÍDIA OUTBOUND] Não foi possível baixar/abrir a mídia enviada:', e?.message || e);
       }
