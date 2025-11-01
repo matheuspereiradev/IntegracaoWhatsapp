@@ -5,13 +5,14 @@
 
 require('dotenv').config();
 
-const { Client, LocalAuth } = require('whatsapp-web.js');
+const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const fs = require('fs');
 const path = require('path');
 const { exec } = require('child_process');
 const express = require('express');
 const cors = require('cors');
+const multer = require('multer');
 const { ObjectId } = require('mongodb');
 
 const { connect, getDb } = require('./db');
@@ -19,7 +20,6 @@ const { connect, getDb } = require('./db');
 // =========================
 // CONFIGURAÇÕES
 // =========================
-const AUTO_OPEN_MEDIA = true; // false se não quiser abrir arquivos automaticamente
 const PORT = process.env.PORT || 3000;
 
 // =========================
@@ -29,8 +29,6 @@ const CHAT_STATUS = {
   FINALIZADO: 'finalizado',
 };
 
-// =========================
-// HELPERS GERAIS
 // =========================
 function ensureDirSync(dir) {
   fs.mkdirSync(dir, { recursive: true });
@@ -44,24 +42,20 @@ function sanitizeName(name) {
 
 function extFromMime(mime) {
   const map = {
-    // Imagens
     'image/jpeg': '.jpg',
     'image/png': '.png',
     'image/webp': '.webp',
     'image/gif': '.gif',
-    // Vídeo
     'video/mp4': '.mp4',
     'video/3gpp': '.3gp',
     'video/quicktime': '.mov',
     'video/x-matroska': '.mkv',
-    // Áudio
     'audio/ogg': '.ogg',
     'audio/opus': '.ogg',
     'audio/mpeg': '.mp3',
     'audio/mp4': '.m4a',
     'audio/aac': '.aac',
     'audio/wav': '.wav',
-    // Documentos
     'application/pdf': '.pdf',
     'application/msword': '.doc',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
@@ -306,8 +300,8 @@ client.on('message', async (msg) => {
     const chat = await msg.getChat();
     const contact = await msg.getContact();
 
-    if(msg.type==="notification_template")
-      return
+    if (msg.type === "notification_template")
+      return;
 
     const who =
       contact?.pushname ||
@@ -324,7 +318,6 @@ client.on('message', async (msg) => {
       ? new Date(msg.timestamp * 1000)
       : new Date();
 
-    // garante/associa chat (INBOUND)
     const chatDoc = await ensureChat({
       msg,
       chat,
@@ -422,7 +415,6 @@ client.on('message_create', async (msg) => {
       ? new Date(msg.timestamp * 1000)
       : new Date();
 
-    // garante/associa chat (OUTBOUND)
     const chatDoc = await ensureChat({
       msg,
       chat,
@@ -431,7 +423,6 @@ client.on('message_create', async (msg) => {
       ts,
     });
 
-    // se estava NOVO e eu enviei msg, vira EM_ANDAMENTO
     if (chatDoc.status === CHAT_STATUS.NOVO) {
       await updateChatStatus(chatDoc._id, CHAT_STATUS.EM_ANDAMENTO);
       chatDoc.status = CHAT_STATUS.EM_ANDAMENTO;
@@ -513,7 +504,6 @@ process.stdin.on('data', async (chunk) => {
       process.exit(0);
     }
 
-    // +5588999999999 >> "mensagem"
     const pattern = /^\s*([+]?[\d\s\-\(\)]+)\s*>>\s*(?:"([^"]+)"|(.+))\s*$/;
     const m = line.match(pattern);
     if (!m) {
@@ -539,36 +529,37 @@ process.stdin.on('data', async (chunk) => {
 });
 
 // =========================
+// API HTTP
+// =========================
 function startHttpServer() {
   const app = express();
   app.use(cors());
   app.use(express.json());
 
+  // --- Upload em memória para enviar mídias ---
+  const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 50 * 1024 * 1024 } // 50 MB
+  });
+
   app.get('/health', (req, res) => {
     res.json({ ok: true, status: 'up' });
   });
 
-  // --------- NOVA ROTA: LISTAR CHATS COM FILTRO DE STATUS ---------
-  // GET /chats?status=novo,em_andamento&q=texto&limit=50
+  // LISTAR CHATS (filtro de status/q)
   app.get('/chats', async (req, res) => {
     try {
       const db = getDb();
       const limit = Math.min(Number(req.query.limit) || 50, 200);
-
       const rawStatus = (req.query.status || '').trim();
       const statusList = rawStatus
         ? rawStatus.split(',').map(s => s.trim()).filter(Boolean)
         : null;
-
       const q = (req.query.q || '').trim();
 
       const filter = {};
-      if (statusList && statusList.length) {
-        filter.status = { $in: statusList };
-      }
-      if (q) {
-        filter.title = { $regex: q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' };
-      }
+      if (statusList && statusList.length) filter.status = { $in: statusList };
+      if (q) filter.title = { $regex: q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' };
 
       const docs = await db.collection('chats')
         .find(filter)
@@ -583,12 +574,11 @@ function startHttpServer() {
     }
   });
 
-  // --------- ROTA EXISTENTE: LISTAR ABERTOS ---------
+  // LISTAR ABERTOS
   app.get('/chats/open', async (req, res) => {
     try {
       const db = getDb();
       const limit = Math.min(Number(req.query.limit) || 50, 200);
-
       const docs = await db.collection('chats')
         .find({ status: { $ne: CHAT_STATUS.FINALIZADO } })
         .sort({ lastMessageAt: -1 })
@@ -602,8 +592,7 @@ function startHttpServer() {
     }
   });
 
-  // --------- NOVA ROTA: LISTAR MENSAGENS DE UM CHAT ---------
-  // GET /chats/:id/messages?limit=50&beforeId=...&since=ISO&until=ISO&direction=inbound&type=image&mediaOnly=true
+  // LISTAR MENSAGENS DO CHAT
   app.get('/chats/:id/messages', async (req, res) => {
     try {
       const db = getDb();
@@ -660,7 +649,7 @@ function startHttpServer() {
     }
   });
 
-  // --------- FINALIZAR CHAT ---------
+  // FINALIZAR CHAT
   app.post('/chats/:id/finish', async (req, res) => {
     try {
       const id = req.params.id;
@@ -675,8 +664,7 @@ function startHttpServer() {
     }
   });
 
-  // --------- ENVIAR MENSAGEM ---------
-  // body: { chatId?: string, phoneNumber?: string, message: string }
+  // ENVIAR TEXTO
   app.post('/messages/send', async (req, res) => {
     try {
       const { chatId, phoneNumber, message } = req.body || {};
@@ -726,6 +714,71 @@ function startHttpServer() {
       res.status(500).json({ ok: false, error: 'failed_send_message' });
     }
   });
+
+  // ============== NOVO: ENVIAR MÍDIA (upload) ==============
+  // multipart/form-data
+  // campos: file (obrigatório), chatId OU phoneNumber, caption?, voice?
+  app.post('/messages/send-media', upload.single('file'), async (req, res) => {
+    try {
+      const { chatId, phoneNumber, caption, voice } = req.body || {};
+      const file = req.file;
+
+      if (!file) {
+        return res.status(400).json({ ok: false, error: 'file_required' });
+      }
+      if (!chatId && !phoneNumber) {
+        return res.status(400).json({ ok: false, error: 'chat_or_phone_required' });
+      }
+
+      let waChatId;
+      let chatDoc;
+
+      if (chatId) {
+        chatDoc = await getChatById(chatId);
+        if (!chatDoc) return res.status(404).json({ ok: false, error: 'chat_not_found' });
+        if (chatDoc.status === CHAT_STATUS.FINALIZADO) {
+          return res.status(409).json({ ok: false, error: 'chat_finalizado' });
+        }
+        waChatId = chatDoc.waChatId;
+      } else {
+        waChatId = toChatId(phoneNumber);
+        if (!waChatId) return res.status(400).json({ ok: false, error: 'invalid_phone_number' });
+        chatDoc = await ensureChatByWaChatId(waChatId, {
+          isGroup: waChatId.endsWith('@g.us'),
+          ts: new Date(),
+        });
+      }
+
+      const b64 = file.buffer.toString('base64');
+      const media = new MessageMedia(file.mimetype, b64, file.originalname);
+    
+      const options = {};
+      if (caption) options.caption = caption;
+      if (!(file.mimetype?.startsWith('image/') || file.mimetype?.startsWith('audio/'))) options.sendMediaAsDocument = true;
+      if (parseBool(voice, false) && file.mimetype?.startsWith('audio/')) options.sendAudioAsVoice = true;
+
+      await client.sendMessage(waChatId, media, options);
+
+      res.json({
+        ok: true,
+        data: {
+          chatId: String(chatDoc._id),
+          waChatId,
+          status: chatDoc.status,
+          filename: file.originalname,
+          mimetype: file.mimetype,
+          size: file.size,
+          caption: caption || null,
+          asDocument: !!options.sendMediaAsDocument,
+          asVoice: !!options.sendAudioAsVoice,
+        },
+      });
+    } catch (err) {
+      console.error('[HTTP] /messages/send-media', err);
+      res.status(500).json({ ok: false, error: 'failed_send_media' });
+    }
+  });
+
 
   app.listen(PORT, () => {
     console.log(`[HTTP] API escutando em http://localhost:${PORT}`);
