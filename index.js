@@ -1,7 +1,5 @@
-// index.js
-// Requisitos: Node 18+
-// Dependências: whatsapp-web.js, qrcode-terminal
-// Execução: node index.js
+const { connect, getDb } = require('./db');
+require('dotenv').config();
 
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
@@ -24,6 +22,24 @@ function sanitizeName(name) {
     .replace(/\s+/g, ' ')
     .trim();
 }
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+/**
+ * Salva mensagem no MongoDB
+ * @param {Object} doc - Documento já normalizado
+ */
+async function saveMessage(doc) {
+  try {
+    const db = getDb();
+    await db.collection('messages').insertOne(doc);
+  } catch (err) {
+    console.error('[DB] Falha ao salvar mensagem:', err?.message || err);
+  }
+}
+
 
 // Mapeamentos comuns do WhatsApp e de documentos
 function extFromMime(mime) {
@@ -169,63 +185,195 @@ client.on('ready', () => {
 });
 
 // -------- Recebimento de mensagens --------
+// Recebimento de mensagens (com download/abertura e persistência no MongoDB)
 client.on('message', async (msg) => {
   try {
+    // Metadados básicos do chat/contato
     const chat = await msg.getChat();
     const contact = await msg.getContact();
 
     const who =
-      (contact?.pushname || contact?.name || contact?.number || msg.author || msg.from);
+      contact?.pushname ||
+      contact?.name ||
+      contact?.number ||
+      msg.author ||      // em grupos, autor real
+      msg.from;          // fallback
 
+    const isGroup = chat.isGroup;
+    const chatName = isGroup ? chat.name : null;
     const type = msg.type || 'unknown';
+    const typeLabel = labelForType(type);
 
+    // Normaliza timestamp do WhatsApp (segundos -> Date)
+    const ts = typeof msg.timestamp === 'number'
+      ? new Date(msg.timestamp * 1000)
+      : new Date();
+
+    // 1) TEXTO
     if (type === 'chat') {
-      // Texto
-      console.log(`\n[Msg recebida] De: ${who}${chat.isGroup ? ` (grupo: ${chat.name})` : ''}`);
+      console.log(`\n[Msg recebida] De: ${who}${isGroup ? ` (grupo: ${chatName})` : ''}`);
       console.log(`Conteúdo: ${msg.body}`);
+
+      // Persistência (MongoDB)
+      await saveMessage({
+        waMessageId: msg.id?._serialized || msg.id?.id || null,
+        direction: 'inbound',
+        chatId: msg.from,                 // id do chat de origem
+        isGroup,
+        chatName,
+        from: msg.author || msg.from,     // em grupo, participante; 1-1, o remetente
+        to: msg.to || null,
+        authorDisplay: who,
+        type: 'chat',
+        body: msg.body,
+        caption: null,
+        media: null,                      // sem mídia
+        timestamp: ts,
+        receivedAt: nowIso()
+      });
       return;
     }
 
-    // Mídia/arquivo (inclui imagem, áudio, PTT, vídeo e documentos)
-    const typeLabel = labelForType(type);
-    console.log(`\n[Arquivo recebido] De: ${who}${chat.isGroup ? ` (grupo: ${chat.name})` : ''}`);
+    // 2) MÍDIA / ARQUIVOS (imagem, áudio, ptt, vídeo, documento, etc.)
+    console.log(`\n[Arquivo recebido] De: ${who}${isGroup ? ` (grupo: ${chatName})` : ''}`);
     console.log(`Tipo: ${typeLabel}${msg.caption ? ` | Legenda: ${msg.caption}` : ''}`);
 
-    // Agora baixamos e abrimos TAMBÉM 'video' e 'document'
+    // Baixa & abre para tipos suportados
+    let savedPath = null;
     if (['image', 'audio', 'ptt', 'video', 'document'].includes(type)) {
-      await saveMediaMessage(msg, chat, who);
+      savedPath = await saveMediaMessage(msg, chat, who);
     }
+
+    // Persistência (MongoDB)
+    await saveMessage({
+      waMessageId: msg.id?._serialized || msg.id?.id || null,
+      direction: 'inbound',
+      chatId: msg.from,
+      isGroup,
+      chatName,
+      from: msg.author || msg.from,
+      to: msg.to || null,
+      authorDisplay: who,
+      type,                                // image, audio, ptt, video, document, ...
+      body: null,                          // não-texto
+      caption: msg.caption || null,
+      media: savedPath
+        ? {
+            savedPath,                     // caminho salvo em disco
+            mimetype: msg._data?.mimetype || null,
+            filename: msg._data?.filename || null,
+          }
+        : null,
+      timestamp: ts,
+      receivedAt: nowIso()
+    });
   } catch (err) {
     console.error('[ERRO message handler]', err);
   }
 });
 
 // -------- Loga mensagens ENVIADAS pela sua conta (qualquer dispositivo) --------
+// Mensagens ENVIADAS pela sua conta (de qualquer dispositivo vinculado)
 client.on('message_create', async (msg) => {
   try {
-    if (!msg.fromMe) return; // apenas mensagens que você enviou
+    // Ignore mensagens que não são suas
+    if (!msg.fromMe) return;
 
     const chat = await msg.getChat();
-    let destinoNome = '';
+    const isGroup = chat.isGroup;
+    const chatName = isGroup ? chat.name : null;
 
-    if (chat.isGroup) {
+    // Destino amigável (nome do grupo ou do contato)
+    let destinoNome = '';
+    if (isGroup) {
       destinoNome = chat.name;
     } else {
       const contato = await chat.getContact();
-      destinoNome = contato?.pushname || contato?.name || contato?.number || msg.to;
+      destinoNome =
+        contato?.pushname ||
+        contato?.name ||
+        contato?.number ||
+        msg.to; // fallback
     }
 
-    if (msg.type === 'chat') {
+    const type = msg.type || 'unknown';
+    const typeLabel = labelForType(type);
+
+    // Timestamp normalizado (WhatsApp envia em segundos)
+    const ts = typeof msg.timestamp === 'number'
+      ? new Date(msg.timestamp * 1000)
+      : new Date();
+
+    // 1) TEXTO
+    if (type === 'chat') {
+      // Log humano
       console.log(`mensagem enviada para ${destinoNome} >> ${msg.body}`);
-    } else {
-      const tipo = labelForType(msg.type);
-      const sufixo = msg.caption ? ` >> ${msg.caption}` : '';
-      console.log(`${tipo} enviada para ${destinoNome}${sufixo}`);
+
+      // Persistência (MongoDB)
+      await saveMessage({
+        waMessageId: msg.id?._serialized || msg.id?.id || null,
+        direction: 'outbound',
+        chatId: msg.to,          // para quem foi enviada
+        isGroup,
+        chatName,
+        from: msg.from,          // seu id
+        to: msg.to,
+        authorDisplay: 'me',
+        type: 'chat',
+        body: msg.body,
+        caption: null,
+        media: null,
+        timestamp: ts,
+        sentAt: nowIso()
+      });
+
+      return;
     }
+
+    // 2) MÍDIA / ARQUIVOS (imagem, áudio, ptt, vídeo, documento, etc.)
+    const legenda = msg.caption ? ` >> ${msg.caption}` : '';
+    console.log(`${typeLabel} enviada para ${destinoNome}${legenda}`);
+
+    // Baixar & abrir mídias que você enviou (inclusive de outro dispositivo)
+    let savedPath = null;
+    if (['image', 'audio', 'ptt', 'video', 'document'].includes(type)) {
+      // Em alguns casos de mídia enviada por outro device, o download pode não estar
+      // imediatamente disponível; o try/catch evita que isso quebre o fluxo.
+      try {
+        savedPath = await saveMediaMessage(msg, chat, destinoNome);
+      } catch (e) {
+        console.warn('[MÍDIA OUTBOUND] Não foi possível baixar/abrir a mídia enviada:', e?.message || e);
+      }
+    }
+
+    // Persistência (MongoDB)
+    await saveMessage({
+      waMessageId: msg.id?._serialized || msg.id?.id || null,
+      direction: 'outbound',
+      chatId: msg.to,
+      isGroup,
+      chatName,
+      from: msg.from,            // você
+      to: msg.to,
+      authorDisplay: 'me',
+      type,                      // image, audio, ptt, video, document, ...
+      body: null,                // não-texto
+      caption: msg.caption || null,
+      media: savedPath
+        ? {
+            savedPath,
+            mimetype: msg._data?.mimetype || null,
+            filename: msg._data?.filename || null,
+          }
+        : null,
+      timestamp: ts,
+      sentAt: nowIso()
+    });
   } catch (err) {
     console.error('[ERRO message_create]', err);
   }
 });
+
 
 // -------- Envio via terminal --------
 process.stdin.setEncoding('utf8');
@@ -261,4 +409,14 @@ process.on('SIGINT', async () => {
 });
 
 // -------- Start --------
+(async () => {
+  try {
+    await connect();
+    console.log('[DB] MongoDB conectado com sucesso.');
+  } catch (e) {
+    console.error('[DB] Erro ao conectar no MongoDB:', e);
+    process.exit(1);
+  }
+})();
+
 client.initialize();
