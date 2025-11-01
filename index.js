@@ -63,14 +63,6 @@ function extFromMime(mime) {
   return map[mime] || '';
 }
 
-function openWithDefaultApp(filePath) {
-  if (!AUTO_OPEN_MEDIA) return;
-  const platform = process.platform;
-  if (platform === 'win32') exec(`start "" "${filePath}"`);
-  else if (platform === 'darwin') exec(`open "${filePath}"`);
-  else exec(`xdg-open "${filePath}"`);
-}
-
 async function saveMediaMessage(msg, chat, whoLabel = 'desconhecido') {
   const media = await msg.downloadMedia(); // { data(base64), mimetype, filename? }
   if (!media) {
@@ -106,7 +98,6 @@ async function saveMediaMessage(msg, chat, whoLabel = 'desconhecido') {
   fs.writeFileSync(filePath, buffer);
   console.log(`[MÍDIA] Salvo em: ${filePath}`);
 
-  openWithDefaultApp(filePath);
   return filePath;
 }
 
