@@ -1,14 +1,13 @@
-// db.js
-const { MongoClient } = require('mongodb');
-require('dotenv').config();
+import { MongoClient, Db } from 'mongodb';
+import 'dotenv/config';
 
-let client;
-let db;
+let client: MongoClient | undefined;
+let db: Db | undefined;
 
 /**
  * Conecta (singleton) no MongoDB e cria índices básicos.
  */
-async function connect() {
+export async function connect(): Promise<Db> {
   if (db) return db;
 
   const uri = process.env.MONGODB_URI || 'mongodb://localhost:27017';
@@ -21,7 +20,6 @@ async function connect() {
   await client.connect();
   db = client.db(dbName);
 
-  // Índices para messages e chats
   await Promise.all([
     // messages
     db.collection('messages').createIndex({ direction: 1, timestamp: -1 }),
@@ -41,14 +39,9 @@ async function connect() {
   return db;
 }
 
-function getDb() {
+export function getDb(): Db {
   if (!db) {
     throw new Error('MongoDB não conectado. Chame connect() antes.');
   }
   return db;
 }
-
-module.exports = {
-  connect,
-  getDb,
-};
