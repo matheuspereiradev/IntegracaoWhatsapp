@@ -81,6 +81,7 @@ client.on('message', async (msg: any) => {
         chatRefId: chatDoc._id!,
         direction: 'inbound',
         chatId: msg.from,
+        channel: 'whatsapp',
         isGroup,
         chatName,
         from: msg.author || msg.from,

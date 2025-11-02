@@ -39,6 +39,7 @@ export async function createChatFromMessage({
   const doc: ChatDoc = {
     waChatId,
     isGroup: !!isGroup,
+    channel: 'whatsapp',
     title: title || null,
     participants,
     status: initialStatus || CHAT_STATUS.NOVO,
