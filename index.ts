@@ -11,7 +11,7 @@ import { ObjectId, Db } from 'mongodb';
 import { connect, getDb } from './db';
 import { labelForType, nowIso, parseBool, saveMediaMessage, toChatId } from './utils';
 import { CHAT_STATUS, ChatDoc, ChatStatus, SavedMessageDoc } from './types';
-import { ensureChat, ensureChatByWaChatId, getChatById, saveMessage, updateChatStatus } from './models';
+import { ensureChat, ensureChatByWaChatId, getChatById, saveMessage, updateChatStatus } from './models-whatsapp';
 
 
 // =========================
@@ -431,7 +431,7 @@ function startHttpServer(): void {
   });
 
   // ENVIAR TEXTO
-  app.post('/messages/send', async (req: Request, res: Response) => {
+  app.post('/whatsapp/messages/send', async (req: Request, res: Response) => {
     try {
       const { chatId, phoneNumber, message } = req.body || {};
       if (!message || (!chatId && !phoneNumber)) {
@@ -482,7 +482,7 @@ function startHttpServer(): void {
   });
 
   // ============== ENVIAR MÍDIA (upload) ==============
-  app.post('/messages/send-media', upload.single('file'), async (req: Request, res: Response) => {
+  app.post('/whatsapp/messages/send-media', upload.single('file'), async (req: Request, res: Response) => {
     try {
       const { chatId, phoneNumber, caption, forceDocument, voice } = (req.body || {}) as Record<string, any>;
       const file = (req as any).file as Express.Multer.File | undefined;
