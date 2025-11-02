@@ -280,6 +280,16 @@ process.stdin.on('data', async (chunk: string) => {
 // =========================
 // API HTTP
 // =========================
+
+/*
+/chats → listar chats com filtros.
+/chats/open → listar chats em aberto.
+/chats/:id/messages → listar mensagens de um chat.
+/chats/:id/finish → finalizar chat.
+/messages/send → enviar texto.
+/messages/send-media → enviar mídia por upload (multipart/form-data).
+*/
+
 function startHttpServer(): void {
   const app = express();
   app.use(cors());
