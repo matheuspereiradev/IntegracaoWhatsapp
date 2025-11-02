@@ -11,7 +11,7 @@ import { ObjectId, Db } from 'mongodb';
 import { connect, getDb } from './db';
 import { labelForType, nowIso, parseBool, saveMediaMessage, toChatId } from './utils';
 import { CHAT_STATUS, ChatDoc, ChatStatus, SavedMessageDoc } from './types';
-import { ensureChat, ensureChatByWaChatId, getChatById, saveMessage, updateChatStatus } from './models-whatsapp';
+import { ensureChat, ensureChatByWaChatId, getChatById, saveMessage, updateChatStatus } from './models';
 
 
 // =========================
