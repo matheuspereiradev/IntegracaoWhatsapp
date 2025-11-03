@@ -10,8 +10,8 @@ import { ObjectId, Db } from 'mongodb';
 // Tipagem do seu módulo db.js (ver db.d.ts)
 import { connect, getDb } from './db';
 import { labelForType, mapMulterFilesToNodemailerAttachments, nowIso, parseBool, saveMediaMessage, toChatId } from './utils';
-import { CHAT_STATUS, ChatDoc, ChatStatus, SavedMessageDoc } from './types';
-import { ensureChat, ensureChatByWaChatId, getChatById, saveMessage, updateChatStatus } from './models';
+import { CHAT_STATUS, ChatDoc, ChatStatus, MessageType, SavedMessageDoc } from './types';
+import { ensureChat, ensureChatByWaChatId, getChatById, saveEmailMessage, saveMessage, updateChatStatus } from './models';
 import { createImapConfigCopy, createTransporter, saveAttachments } from './gmail';
 import { ParsedMail, simpleParser } from 'mailparser';
 import { SendMailOptions, Transporter } from 'nodemailer';
@@ -171,6 +171,7 @@ async function connectImapInboxListener(onNewMail?: (args: any) => void): Promis
               const inReplyTo = (parsed.inReplyTo as string) || (parsed.references && parsed.references.length ? parsed.references[0] : null);
               const threadLabel = inReplyTo ? `[RESPOSTA ${inReplyTo}]` : '[NOVO]';
 
+              console.log('============================VOCÊ RECEBEU UM EMAIL=======================');
               console.log(`--- ${threadLabel} ---`);
               console.log('UID:', uid);
               console.log('Message-ID:', messageId);
@@ -188,7 +189,14 @@ async function connectImapInboxListener(onNewMail?: (args: any) => void): Promis
                 }
               }
 
+              try {
+                await saveEmailMessage({ parsed, direction: "inbound" });
+              } catch (err) {
+                console.error("[IMAP-INBOX] erro ao salvar email no banco:", err);
+              }
+
               if (onNewMail) onNewMail({ parsed, attributes });
+
             } catch (parseErr) {
               console.error('[IMAP-INBOX] erro ao parsear mensagem:', parseErr);
             }
@@ -301,14 +309,11 @@ async function connectSentListener(): Promise<any> {
               const uid = attributes && attributes.uid;
               const messageId = parsed.messageId || '(sem message-id)';
 
-              console.log('===================================');
-              console.log('===MENSAGEM ENVIADA===');
-              console.log('UID:', uid);
-              console.log('Message-ID:', messageId);
-              console.log('Para:', to);
-              console.log('Assunto:', subject);
-              console.log('Quantidade de anexos:', attachmentsCount);
-              console.log('===================================');
+              try {
+                await saveEmailMessage({ parsed, direction: "outbound" });
+              } catch (err) {
+                console.error("[IMAP-SENT] erro ao salvar email no banco:", err);
+              }
 
               if (attachmentsCount > 0 && parsed.attachments) {
                 try {
@@ -359,7 +364,7 @@ client.on('message', async (msg: any) => {
 
     const isGroup: boolean = chat.isGroup;
     const chatName: string | null = isGroup ? chat.name : null;
-    const type: string = msg.type || 'unknown';
+    const type: MessageType = msg.type || 'unknown';
     const typeLabel = labelForType(type);
     const ts: Date = typeof msg.timestamp === 'number'
       ? new Date(msg.timestamp * 1000)
@@ -390,6 +395,7 @@ client.on('message', async (msg: any) => {
         authorDisplay: who,
         type: 'chat',
         body: msg.body,
+        channel: 'whatsapp',
         caption: null,
         media: null,
         timestamp: ts,
@@ -416,6 +422,7 @@ client.on('message', async (msg: any) => {
       from: msg.author || msg.from,
       to: msg.to || null,
       authorDisplay: who,
+      channel: 'whatsapp',
       type,
       body: null,
       caption: msg.caption || null,
@@ -457,7 +464,7 @@ client.on('message_create', async (msg: any) => {
         msg.to;
     }
 
-    const type: string = msg.type || 'unknown';
+    const type: MessageType = msg.type || 'unknown';
     const typeLabel = labelForType(type);
     const ts: Date = typeof msg.timestamp === 'number'
       ? new Date(msg.timestamp * 1000)
@@ -490,6 +497,7 @@ client.on('message_create', async (msg: any) => {
         chatName,
         from: msg.from,
         to: msg.to,
+        channel: 'whatsapp',
         authorDisplay: 'me',
         type: 'chat',
         body: msg.body,
@@ -523,6 +531,7 @@ client.on('message_create', async (msg: any) => {
       from: msg.from,
       to: msg.to,
       authorDisplay: 'me',
+      channel: 'whatsapp',
       type,
       body: null,
       caption: msg.caption || null,
@@ -753,7 +762,7 @@ function startHttpServer(): void {
         if (chatDoc.status === CHAT_STATUS.FINALIZADO) {
           return res.status(409).json({ ok: false, error: 'chat_finalizado' });
         }
-        waChatId = chatDoc.waChatId;
+        waChatId = chatDoc.waChatId ?? null;
       } else {
         waChatId = toChatId(phoneNumber);
         if (!waChatId) {
@@ -805,7 +814,7 @@ function startHttpServer(): void {
         if (chatDoc.status === CHAT_STATUS.FINALIZADO) {
           return res.status(409).json({ ok: false, error: 'chat_finalizado' });
         }
-        waChatId = chatDoc.waChatId;
+        waChatId = chatDoc.waChatId ?? null;
       } else {
         waChatId = toChatId(phoneNumber);
         if (!waChatId) return res.status(400).json({ ok: false, error: 'invalid_phone_number' });
