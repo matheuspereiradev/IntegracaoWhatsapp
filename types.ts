@@ -108,3 +108,9 @@ export interface SavedMessageDoc {
 }
 
 export type AnyObject = Record<string, any>;
+
+export interface SilencedClientDoc {
+  _id?: ObjectId;
+  identifier: string;     // ex.: '+5588999999999' ou 'cliente@exemplo.com'
+  createdAt: string;
+}

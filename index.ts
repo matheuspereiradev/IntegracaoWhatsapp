@@ -11,7 +11,7 @@ import { ObjectId, Db } from 'mongodb';
 import { connect, getDb } from './db';
 import { labelForType, mapMulterFilesToNodemailerAttachments, nowIso, parseBool, saveMediaMessage, toChatId } from './utils';
 import { CHAT_STATUS, ChatDoc, ChatStatus, MessageType, SavedMessageDoc } from './types';
-import { ensureChat, ensureChatByWaChatId, getChatById, saveEmailMessage, saveMessage, updateChatStatus, updateChatTags } from './models';
+import { addSilencedClient, ensureChat, ensureChatByWaChatId, findSilencedClient, getChatById, listSilencedClients, removeSilencedClient, saveEmailMessage, saveMessage, updateChatStatus, updateChatTags } from './models';
 import { createImapConfigCopy, createTransporter, saveAttachments } from './gmail';
 import { ParsedMail, simpleParser } from 'mailparser';
 import { SendMailOptions, Transporter } from 'nodemailer';
@@ -353,7 +353,13 @@ client.on('message', async (msg: any) => {
     const chat = await msg.getChat();
     const contact = await msg.getContact();
 
-    if (msg.type === 'notification_template') return;
+    const from = await findSilencedClient(msg.from)
+    const to = await findSilencedClient(msg.to)
+    if (from || to) {
+      return;
+    }
+
+    if (['notification_template', 'status'].includes(msg.type)) return;
 
     const who: string =
       contact?.pushname ||
@@ -447,6 +453,12 @@ client.on('message', async (msg: any) => {
 client.on('message_create', async (msg: any) => {
   try {
     if (!msg.fromMe) return;
+
+    const from = await findSilencedClient(msg.from)
+    const to = await findSilencedClient(msg.to)
+    if (from || to) {
+      return;
+    }
 
     const chat = await msg.getChat();
     const isGroup: boolean = chat.isGroup;
@@ -937,6 +949,40 @@ function startHttpServer(): void {
     } catch (e: any) {
       console.error('[HTTP /reply] erro:', e);
       return res.status(500).json({ error: e.message || String(e) });
+    }
+  });
+
+  app.post("/silenced", async (req: Request, res: Response) => {
+    try {
+      const { identifier } = req.body;
+      if (!identifier) return res.status(400).json({ ok: false, error: "missing_identifier" });
+
+      const doc = await addSilencedClient(identifier);
+      res.json({ ok: true, data: doc });
+    } catch (err: any) {
+      console.error("[HTTP] POST /silenced", err);
+      res.status(500).json({ ok: false, error: err?.message || "internal_error" });
+    }
+  });
+
+  app.delete("/silenced/:idOrIdentifier", async (req: Request, res: Response) => {
+    try {
+      const { idOrIdentifier } = req.params;
+      const ok = await removeSilencedClient(idOrIdentifier);
+      res.json({ ok });
+    } catch (err: any) {
+      console.error("[HTTP] DELETE /silenced/:idOrIdentifier", err);
+      res.status(500).json({ ok: false, error: err?.message || "internal_error" });
+    }
+  });
+
+  app.get("/silenced", async (req: Request, res: Response) => {
+    try {
+      const docs = await listSilencedClients();
+      res.json({ ok: true, data: docs });
+    } catch (err: any) {
+      console.error("[HTTP] GET /silenced", err);
+      res.status(500).json({ ok: false, error: err?.message || "internal_error" });
     }
   });
 

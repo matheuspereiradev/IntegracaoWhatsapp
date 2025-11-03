@@ -1,5 +1,5 @@
 import { Db, ObjectId } from "mongodb";
-import { CHAT_STATUS, ChatDoc, ChatStatus, SavedMessageDoc } from "./types";
+import { CHAT_STATUS, ChatDoc, ChatStatus, SavedMessageDoc, SilencedClientDoc } from "./types";
 import { getDb } from "./db";
 import { nowIso } from "./utils";
 import { ParsedMail } from "mailparser";
@@ -388,7 +388,7 @@ export async function saveEmailMessage({
       snippet: (bodyText || "").substring(0, 120),
       bodyText,
       bodyHtml,
-      attachments: attachments.map((a:any) => ({
+      attachments: attachments.map((a: any) => ({
         filename: a.filename,
         savedPath: a.savedPath,
         mimeType: a.mimeType,
@@ -398,4 +398,41 @@ export async function saveEmailMessage({
   };
 
   await saveMessageDoc(messageDoc);
+}
+
+export async function addSilencedClient(identifier: string): Promise<SilencedClientDoc> {
+  const db = getDb();
+  const now = new Date().toISOString();
+
+  const res = await db.collection<SilencedClientDoc>('silenced_clients').findOneAndUpdate(
+    { identifier },
+    { $setOnInsert: { createdAt: now } },
+    { upsert: true, returnDocument: 'after' }
+  );
+
+  return res || { identifier, createdAt: now };
+}
+
+export async function removeSilencedClient(identifierOrId: string): Promise<boolean> {
+  const db = getDb();
+  let filter: any = { identifier: identifierOrId };
+  if (ObjectId.isValid(identifierOrId)) {
+    filter = { $or: [{ _id: new ObjectId(identifierOrId) }, { identifier: identifierOrId }] };
+  }
+  const res = await db.collection('silenced_clients').deleteOne(filter);
+  return res.deletedCount > 0;
+}
+
+export async function listSilencedClients(limit = 100): Promise<SilencedClientDoc[]> {
+  const db = getDb();
+  return db.collection<SilencedClientDoc>('silenced_clients')
+    .find({})
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .toArray();
+}
+
+export async function findSilencedClient(identifier: string): Promise<SilencedClientDoc | null> {
+  const db = getDb();
+  return db.collection<SilencedClientDoc>('silenced_clients').findOne({ identifier });
 }

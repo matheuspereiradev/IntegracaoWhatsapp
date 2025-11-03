@@ -33,6 +33,9 @@ export async function connect(): Promise<Db> {
     db.collection('chats').createIndex({ waChatId: 1, status: 1 }),
     db.collection('chats').createIndex({ updatedAt: -1 }),
     db.collection('chats').createIndex({ lastMessageAt: -1 }),
+
+    db.collection('silenced_clients').createIndex({ identifier: 1 }, { unique: true }),
+    db.collection('silenced_clients').createIndex({ identifier: 1, createdAt: -1 }),
   ]);
 
   console.log('[DB] Conectado ao MongoDB e índices criados.');
