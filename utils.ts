@@ -5,6 +5,19 @@ export function ensureDirSync(dir: string): void {
   fs.mkdirSync(dir, { recursive: true });
 }
 
+export function getBaseDir(name:string): string {
+  const date = new Date();
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  return path.join(
+    __dirname,
+    'downloads',
+    `${yyyy}-${mm}-${dd}`,
+    name
+  );
+}
+
 export function sanitizeName(name: string): string {
   return String(name || '')
     .replaceAll(/[^a-zA-Z0-9]/g, '')
@@ -55,17 +68,9 @@ export async function saveMediaMessage(msg: any, chat: any, whoLabel: string = '
     return null;
   }
 
-  const date = new Date();
-  const yyyy = date.getFullYear();
-  const mm = String(date.getMonth() + 1).padStart(2, '0');
-  const dd = String(date.getDate()).padStart(2, '0');
 
-  const baseDir = path.join(
-    __dirname,
-    'downloads',
-    `${yyyy}-${mm}-${dd}`,
-    sanitizeName(chat.isGroup ? chat.name : whoLabel)
-  );
+  const baseDir = getBaseDir(sanitizeName(chat.isGroup ? chat.name : whoLabel))
+
   ensureDirSync(baseDir);
 
   const guessedExt = extFromMime(media.mimetype);
@@ -122,3 +127,11 @@ export function parseBool(v: unknown, def: boolean = false): boolean {
   return ['1', 'true', 'yes', 'y', 'on'].includes(s);
 }
 
+export function mapMulterFilesToNodemailerAttachments(filesArray?: Express.Multer.File[] | undefined) {
+  if (!filesArray || !filesArray.length) return [];
+  return filesArray.map(f => ({
+    filename: f.originalname,
+    content: f.buffer,
+    contentType: f.mimetype,
+  }));
+}

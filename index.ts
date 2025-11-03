@@ -9,10 +9,20 @@ import { ObjectId, Db } from 'mongodb';
 
 // Tipagem do seu módulo db.js (ver db.d.ts)
 import { connect, getDb } from './db';
-import { labelForType, nowIso, parseBool, saveMediaMessage, toChatId } from './utils';
+import { labelForType, mapMulterFilesToNodemailerAttachments, nowIso, parseBool, saveMediaMessage, toChatId } from './utils';
 import { CHAT_STATUS, ChatDoc, ChatStatus, SavedMessageDoc } from './types';
 import { ensureChat, ensureChatByWaChatId, getChatById, saveMessage, updateChatStatus } from './models';
+import { createImapConfigCopy, createTransporter, saveAttachments } from './gmail';
+import { ParsedMail, simpleParser } from 'mailparser';
+import { SendMailOptions, Transporter } from 'nodemailer';
+const Imap: any = require('node-imap');
 
+// =========================
+// GLOBAL GMAIL
+// =========================
+
+let globalImapInbox: any = null;
+let transporterGlobal: Transporter | null = null;
 
 // =========================
 // CLIENT WHATSAPP
@@ -38,8 +48,300 @@ client.on('ready', () => {
   console.log('Ex.: +5588999999999 >> "Olá, deu certo!"\n');
 });
 
+
+//
+
+
+
 // =========================
-// MENSAGENS RECEBIDAS
+// MENSAGENS RECEBIDAS GMAIL
+// =========================
+function fetchMessageByUid(uid: string | number): Promise<ParsedMail> {
+  return new Promise((resolve, reject) => {
+    if (!globalImapInbox) return reject(new Error('IMAP INBOX não inicializado ainda'));
+    globalImapInbox.search([['UID', uid]], (err: any, results: number[]) => {
+      if (err) return reject(err);
+      if (!results || !results.length) return reject(new Error('UID não encontrado'));
+      const fetcher = globalImapInbox.fetch(results, { bodies: '' });
+      fetcher.on('message', (msg: any) => {
+        let raw = '';
+        msg.on('body', (stream: NodeJS.ReadableStream) => {
+          stream.on('data', (chunk: Buffer) => raw += chunk.toString('utf8'));
+        });
+        msg.once('end', async () => {
+          try {
+            const parsed = await simpleParser(raw);
+            resolve(parsed);
+          } catch (e) {
+            reject(e);
+          }
+        });
+      });
+      fetcher.once('error', (e: any) => reject(e));
+    });
+  });
+}
+
+function fetchMessageByMessageId(messageId: string): Promise<ParsedMail> {
+  return new Promise((resolve, reject) => {
+    if (!globalImapInbox) return reject(new Error('IMAP INBOX não inicializado ainda'));
+    const q = messageId.replace(/^<|>$/g, '');
+    globalImapInbox.search([['HEADER', 'Message-ID', q]], (err: any, results: number[]) => {
+      if (err) return reject(err);
+      if (!results || !results.length) return reject(new Error('Message-ID não encontrado'));
+      const fetcher = globalImapInbox.fetch(results, { bodies: '' });
+      fetcher.on('message', (msg: any) => {
+        let raw = '';
+        msg.on('body', (stream: NodeJS.ReadableStream) => {
+          stream.on('data', (chunk: Buffer) => raw += chunk.toString('utf8'));
+        });
+        msg.once('end', async () => {
+          try {
+            const parsed = await simpleParser(raw);
+            resolve(parsed);
+          } catch (e) {
+            reject(e);
+          }
+        });
+      });
+      fetcher.once('error', (e: any) => reject(e));
+    });
+  });
+}
+
+
+async function connectImapInboxListener(onNewMail?: (args: any) => void): Promise<any> {
+  const imapConfigBase = createImapConfigCopy();
+  let lastSeenUid = 0;
+
+  async function buildImap(): Promise<any> {
+    const imapConfig = { ...imapConfigBase };
+    const imap = new Imap(imapConfig);
+
+    imap.once('ready', () => {
+      console.log('[IMAP-INBOX] conectado. Abrindo INBOX...');
+      imap.openBox('INBOX', false, (err: any, box: any) => {
+        if (err) {
+          console.error('[IMAP-INBOX] erro ao abrir INBOX:', err);
+          return;
+        }
+        lastSeenUid = (box.uidnext && Number(box.uidnext) > 0) ? Number(box.uidnext) - 1 : 0;
+        console.log('[IMAP-INBOX] INBOX aberta. Mensagens na caixa:', box.messages.total);
+        console.log('[IMAP-INBOX] ignorando mensagens antigas. lastSeenUid inicial:', lastSeenUid);
+        globalImapInbox = imap;
+      });
+    });
+
+    imap.on('mail', (numNewMsgs: number) => {
+      console.log(`[IMAP-INBOX] Evento 'mail' recebido. Indicação de novas mensagens: ${numNewMsgs}`);
+      imap.search(['UNSEEN'], (err: any, results: number[]) => {
+        if (err) {
+          console.error('[IMAP-INBOX] erro na busca:', err);
+          return;
+        }
+        if (!results || !results.length) return;
+
+        const newUids = results
+          .map(r => Number(r))
+          .filter(uid => uid > lastSeenUid)
+          .sort((a, b) => a - b);
+
+        if (!newUids.length) return;
+
+        lastSeenUid = Math.max(lastSeenUid, ...newUids);
+
+        const fetcher = imap.fetch(newUids, { bodies: '', markSeen: true });
+        fetcher.on('message', (msg: any) => {
+          let raw = '';
+          let attributes: any = null;
+          msg.on('body', (stream: NodeJS.ReadableStream) => {
+            stream.on('data', (chunk: Buffer) => raw += chunk.toString('utf8'));
+          });
+          msg.once('attributes', (attrs: any) => attributes = attrs);
+          msg.once('end', async () => {
+            try {
+              const parsed: ParsedMail = await simpleParser(raw);
+              const from = parsed.from?.text || (parsed.from?.value?.map((v: any) => v.address).join(', ')) || '(remetente desconhecido)';
+              const subject = parsed.subject || '(sem assunto)';
+              const text = parsed.text || parsed.html || '';
+              const attachmentsCount = parsed.attachments ? parsed.attachments.length : 0;
+              const messageId = parsed.messageId || (attributes && attributes['uid']) || 'unknown';
+              const uid = attributes && attributes.uid;
+
+              const inReplyTo = (parsed.inReplyTo as string) || (parsed.references && parsed.references.length ? parsed.references[0] : null);
+              const threadLabel = inReplyTo ? `[RESPOSTA ${inReplyTo}]` : '[NOVO]';
+
+              console.log(`--- ${threadLabel} ---`);
+              console.log('UID:', uid);
+              console.log('Message-ID:', messageId);
+              console.log('Remetente:', from);
+              console.log('Assunto:', subject);
+              console.log('Corpo (texto curto):', (text && (text as string).substring(0, 1000)) || '(vazio)');
+              console.log('Quantidade de anexos:', attachmentsCount);
+              console.log('----------------------------');
+
+              if (attachmentsCount > 0 && parsed.attachments) {
+                try {
+                  await saveAttachments(parsed.attachments, uid);
+                } catch (e) {
+                  console.error('[IMAP-INBOX/ANEXOS] erro ao salvar anexos:', e);
+                }
+              }
+
+              if (onNewMail) onNewMail({ parsed, attributes });
+            } catch (parseErr) {
+              console.error('[IMAP-INBOX] erro ao parsear mensagem:', parseErr);
+            }
+          });
+        });
+        fetcher.once('error', (err: any) => console.error('[IMAP-INBOX] fetch error:', err));
+      });
+    });
+
+    imap.on('error', (err: any) => console.error('[IMAP-INBOX] erro:', err));
+    imap.on('end', () => {
+      console.log('[IMAP-INBOX] conexão encerrada. Tentarei reconectar em 5s...');
+      setTimeout(() => buildImap().catch((e) => console.error('[IMAP-INBOX] falha ao reconectar:', e)), 5000);
+    });
+
+    imap.connect();
+    return imap;
+  }
+
+  return buildImap();
+}
+
+
+async function connectSentListener(): Promise<any> {
+  const imapConfigBase = createImapConfigCopy();
+  let lastSentUid = 0;
+
+  async function buildImapSent(): Promise<any> {
+    const imapConfig = { ...imapConfigBase };
+    const imapSent = new Imap(imapConfig);
+
+    imapSent.once('ready', () => {
+      imapSent.getBoxes((err: any, boxes: any) => {
+        if (err) {
+          console.error('[IMAP-SENT] erro ao listar pastas:', err);
+          return;
+        }
+
+        function flattenBoxes(obj: any, prefix = ''): { name: string; attribs: string[]; boxObj: any }[] {
+          const results: { name: string; attribs: string[]; boxObj: any }[] = [];
+          for (const name of Object.keys(obj)) {
+            const box = obj[name];
+            const delim = box.delimiter || '/';
+            const fullName = prefix ? `${prefix}${delim}${name}` : name;
+            results.push({ name: fullName, attribs: box.attribs || [], boxObj: box });
+            if (box.children) {
+              results.push(...flattenBoxes(box.children, fullName));
+            }
+          }
+          return results;
+        }
+
+        const flat = flattenBoxes(boxes);
+        let chosen = flat.find(b => (b.attribs || []).some(a => String(a).toLowerCase().includes('\\sent')));
+        if (!chosen) chosen = flat.find(b => b.name.toLowerCase().includes('sent'));
+
+        if (!chosen) {
+          console.warn('[IMAP-SENT] não foi encontrada automaticamente uma pasta "Sent". Lista de pastas disponíveis:');
+          for (const b of flat) {
+            console.log(' -', b.name, 'attribs=', b.attribs && b.attribs.join ? b.attribs.join(',') : b.attribs);
+          }
+          console.error('[IMAP-SENT] escolha manualmente o nome da pasta Sent (ex.: "[Gmail]/Sent Mail") e atualize o script ou me diga para eu ajustar.');
+          return;
+        }
+
+        imapSent.openBox(chosen.name, false, (errOpen: any, box: any) => {
+          if (errOpen) {
+            console.error(`[IMAP-SENT] erro ao abrir a pasta "${chosen.name}":`, errOpen);
+            return;
+          }
+          lastSentUid = (box.uidnext && Number(box.uidnext) > 0) ? Number(box.uidnext) - 1 : 0;
+          console.log(`[IMAP-SENT] monitorando a pasta "${chosen.name}". lastSentUid inicial: ${lastSentUid}. Mensagens na pasta: ${box.messages.total}`);
+        });
+      });
+    });
+
+    imapSent.on('mail', (numNewMsgs: number) => {
+      console.log(`[IMAP-SENT] Evento 'mail' recebido na pasta Sent. Indicação de novas mensagens: ${numNewMsgs}`);
+      imapSent.search(['ALL'], (err: any, results: number[]) => {
+        if (err) {
+          console.error('[IMAP-SENT] erro na busca:', err);
+          return;
+        }
+        if (!results || !results.length) return;
+
+        const newUids = results
+          .map(r => Number(r))
+          .filter(uid => uid > lastSentUid)
+          .sort((a, b) => a - b);
+
+        if (!newUids.length) return;
+
+        lastSentUid = Math.max(lastSentUid, ...newUids);
+
+        const fetcher = imapSent.fetch(newUids, { bodies: '', markSeen: false });
+        fetcher.on('message', (msg: any) => {
+          let raw = '';
+          let attributes: any = null;
+          msg.on('body', (stream: NodeJS.ReadableStream) => {
+            stream.on('data', (chunk: Buffer) => raw += chunk.toString('utf8'));
+          });
+          msg.once('attributes', (attrs: any) => attributes = attrs);
+          msg.once('end', async () => {
+            try {
+              const parsed: ParsedMail = await simpleParser(raw);
+              //@ts-ignore
+              const to = parsed.to?.text || (parsed.to?.value?.map((v: any) => v.address).join(', ')) || '(destinatário desconhecido)';
+              const subject = parsed.subject || '(sem assunto)';
+              const attachmentsCount = parsed.attachments ? parsed.attachments.length : 0;
+              const uid = attributes && attributes.uid;
+              const messageId = parsed.messageId || '(sem message-id)';
+
+              console.log('===================================');
+              console.log('===MENSAGEM ENVIADA===');
+              console.log('UID:', uid);
+              console.log('Message-ID:', messageId);
+              console.log('Para:', to);
+              console.log('Assunto:', subject);
+              console.log('Quantidade de anexos:', attachmentsCount);
+              console.log('===================================');
+
+              if (attachmentsCount > 0 && parsed.attachments) {
+                try {
+                  await saveAttachments(parsed.attachments, uid);
+                } catch (e) {
+                  console.error('[IMAP-SENT/ANEXOS] erro ao salvar anexos da mensagem enviada:', e);
+                }
+              }
+            } catch (e) {
+              console.error('[IMAP-SENT] erro ao parsear mensagem enviada:', e);
+            }
+          });
+        });
+        fetcher.once('error', (err: any) => console.error('[IMAP-SENT] fetch error:', err));
+      });
+    });
+
+    imapSent.on('error', (err: any) => console.error('[IMAP-SENT] erro:', err));
+    imapSent.on('end', () => {
+      console.log('[IMAP-SENT] conexão encerrada. Tentarei reconectar em 5s...');
+      setTimeout(() => buildImapSent().catch((e) => console.error('[IMAP-SENT] falha ao reconectar:', e)), 5000);
+    });
+
+    imapSent.connect();
+    return imapSent;
+  }
+
+  return buildImapSent();
+}
+
+
+// =========================
+// MENSAGENS RECEBIDAS WHATSAPP
 // =========================
 client.on('message', async (msg: any) => {
   try {
@@ -119,10 +421,10 @@ client.on('message', async (msg: any) => {
       caption: msg.caption || null,
       media: savedPath
         ? {
-            savedPath,
-            mimetype: msg._data?.mimetype || null,
-            filename: msg._data?.filename || null,
-          }
+          savedPath,
+          mimetype: msg._data?.mimetype || null,
+          filename: msg._data?.filename || null,
+        }
         : null,
       timestamp: ts,
       receivedAt: nowIso(),
@@ -226,10 +528,10 @@ client.on('message_create', async (msg: any) => {
       caption: msg.caption || null,
       media: savedPath
         ? {
-            savedPath,
-            mimetype: msg._data?.mimetype || null,
-            filename: msg._data?.filename || null,
-          }
+          savedPath,
+          mimetype: msg._data?.mimetype || null,
+          filename: msg._data?.filename || null,
+        }
         : null,
       timestamp: ts,
       sentAt: nowIso(),
@@ -248,7 +550,7 @@ process.stdin.on('data', async (chunk: string) => {
   for (const line of lines) {
     if (/^(exit|quit)$/i.test(line)) {
       console.log('Saindo...');
-      try { await client.destroy(); } catch {}
+      try { await client.destroy(); } catch { }
       process.exit(0);
     }
 
@@ -365,7 +667,7 @@ function startHttpServer(): void {
       const { id } = req.params;
       if (!ObjectId.isValid(id)) {
         return res.status(400).json({ ok: false, error: 'invalid_chat_id' });
-        }
+      }
       const chatRefId = new ObjectId(String(id));
 
       const limit = Math.min(Number(req.query.limit) || 50, 200);
@@ -543,6 +845,78 @@ function startHttpServer(): void {
     }
   });
 
+  app.post('/send', upload.array('attachments'), async (req: Request, res: Response) => {
+    try {
+      const { to, subject, text } = req.body as { to?: string; subject?: string; text?: string };
+      if (!to) return res.status(400).json({ error: 'Campo "to" é obrigatório' });
+      const attachments = mapMulterFilesToNodemailerAttachments((req as any).files);
+      const mail: SendMailOptions = {
+        from: process.env.EMAIL,
+        to,
+        subject: subject || 'Mensagem via API',
+        text: text || '',
+        attachments,
+      };
+      if (!transporterGlobal) return res.status(500).json({ error: 'Transporter não inicializado' });
+      const info = await transporterGlobal.sendMail(mail);
+      console.log('===================================');
+      console.log('===MENSAGEM ENVIADA===');
+      console.log('Para:', to);
+      console.log('Assunto:', mail.subject);
+      console.log('Message-ID:', info.messageId || info.response || '(sem id)');
+      console.log('===================================');
+      return res.json({ ok: true, messageId: info.messageId || info.response });
+    } catch (e: any) {
+      console.error('[HTTP /send] erro:', e);
+      return res.status(500).json({ error: e.message || String(e) });
+    }
+  });
+
+  app.post('/reply', upload.array('attachments'), async (req: Request, res: Response) => {
+    try {
+      const { uid, messageId, text } = req.body as { uid?: string; messageId?: string; text?: string };
+      if (!uid && !messageId) return res.status(400).json({ error: 'Informe "uid" ou "messageId" do e-mail original' });
+
+      let original: ParsedMail;
+      if (uid) original = await fetchMessageByUid(uid);
+      else original = await fetchMessageByMessageId(messageId!);
+
+      const originalFrom = original.from?.value?.[0];
+      const replyTo = originalFrom?.address || original.from?.text;
+      const originalSubject = original.subject || '';
+      const originalMessageId = original.messageId || null;
+
+      if (!replyTo) return res.status(500).json({ error: 'Não foi possível identificar destinatário original para a resposta' });
+
+      const subject = originalSubject.match(/^Re:/i) ? originalSubject : 'Re: ' + originalSubject;
+      const attachments = mapMulterFilesToNodemailerAttachments((req as any).files);
+      const mail: SendMailOptions = {
+        from: process.env.EMAIL,
+        to: replyTo,
+        subject,
+        text: text || '',
+        attachments,
+        inReplyTo: originalMessageId || undefined,
+        references: originalMessageId ? originalMessageId : undefined,
+      };
+
+      if (!transporterGlobal) return res.status(500).json({ error: 'Transporter não inicializado' });
+      const info = await transporterGlobal.sendMail(mail);
+
+      console.log('===================================');
+      console.log('===MENSAGEM ENVIADA===');
+      console.log('Para:', replyTo);
+      console.log('Assunto:', subject);
+      console.log('Message-ID:', info.messageId || info.response || '(sem id)');
+      console.log('===================================');
+
+      return res.json({ ok: true, messageId: info.messageId || info.response });
+    } catch (e: any) {
+      console.error('[HTTP /reply] erro:', e);
+      return res.status(500).json({ error: e.message || String(e) });
+    }
+  });
+
   app.listen(Number(process.env.PORT) || 3000, () => {
     console.log(`[HTTP] API escutando em http://localhost:${Number(process.env.PORT) || 3000}`);
   });
@@ -556,6 +930,11 @@ function startHttpServer(): void {
     await connect(); // MongoDB
     client.initialize(); // WhatsApp
     startHttpServer(); // HTTP API
+
+    transporterGlobal = await createTransporter();
+
+    const imapInbox = await connectImapInboxListener();
+    const imapSent = await connectSentListener();
   } catch (err) {
     console.error('[BOOT] Erro ao iniciar aplicação:', err);
     process.exit(1);

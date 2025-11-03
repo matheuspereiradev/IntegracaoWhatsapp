@@ -45,3 +45,6 @@ export type ChatDoc = {
   updatedAt: string;
   lastMessageAt: Date;
 };
+
+
+export type AnyObject = Record<string, any>;
