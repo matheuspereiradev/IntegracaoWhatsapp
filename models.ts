@@ -42,6 +42,7 @@ export async function createChatFromMessage({
     channel: 'whatsapp',
     isGroup: !!isGroup,
     title: title || null,
+    tags: [],
     participants,
     status: initialStatus || CHAT_STATUS.NOVO,
     createdAt: nowIso(),
@@ -57,6 +58,14 @@ export async function updateChatStatus(chatId: ObjectId | string, newStatus: Cha
   await db.collection('chats').updateOne(
     { _id: new ObjectId(String(chatId)) },
     { $set: { status: newStatus, updatedAt: nowIso() } }
+  );
+}
+
+export async function updateChatTags(chatId: ObjectId | string, tags: string[]): Promise<void> {
+  const db: Db = getDb();
+  await db.collection('chats').updateOne(
+    { _id: new ObjectId(String(chatId)) },
+    { $set: { tags, updatedAt: nowIso() } }
   );
 }
 
@@ -180,6 +189,7 @@ export async function createEmailChat({
   const doc: ChatDoc = {
     channel: 'email',
     isGroup: false,
+    tags: [],
     title: title || emailPeer || threadId || null,
     participants: participants.length ? participants : (emailPeer ? [emailPeer] : []),
     status: initialStatus,
@@ -353,8 +363,7 @@ export async function saveEmailMessage({
     direction,
     type: "email",
     timestamp: new Date(),
-    receivedAt: direction === "inbound" ? new Date().toISOString() : undefined,
-    sentAt: direction === "outbound" ? new Date().toISOString() : undefined,
+    messageAt: new Date().toISOString(),
     isGroup: false,
     chatName: chat.title,
     from,

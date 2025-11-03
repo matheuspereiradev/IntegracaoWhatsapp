@@ -4,6 +4,9 @@ export const CHAT_STATUS = {
   NOVO: 'novo',
   EM_ANDAMENTO: 'em_andamento',
   FINALIZADO: 'finalizado',
+  PENDENTE: 'pendente',
+  EM_ESPERA: 'em_espera',
+  AGUARDANDO_BACKLOG: 'aguardando_backlog',
 } as const;
 
 export type Channel = 'whatsapp' | 'email';
@@ -69,6 +72,7 @@ export interface ChatDoc {
   title: string | null;          // nome amigável do chat (contato/assunto)
   participants: string[];        // WA: números; Email: endereços
   status: ChatStatus;            // 'novo' | 'em_andamento' | 'finalizado'
+  tags: string[];              // tags customizáveis
 
   /** ====== Campos de WhatsApp ====== */
   waChatId?: string | null;     // ex.: '5588999999999@c.us' ou '@g.us' para grupos
@@ -90,8 +94,7 @@ export interface SavedMessageDoc {
   direction: MessageDirection;           // 'inbound' | 'outbound'
   type: MessageType;                     // 'chat' | 'image' | ... | 'email'
   timestamp: Date;
-  receivedAt?: string;
-  sentAt?: string;
+  messageAt?: string;
   isGroup: boolean;
   chatName: string | null;               // rótulo amigável do chat no momento
   from: string | null;                   // WA: autor/id; Email: endereço

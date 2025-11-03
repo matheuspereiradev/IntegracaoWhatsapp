@@ -11,7 +11,7 @@ import { ObjectId, Db } from 'mongodb';
 import { connect, getDb } from './db';
 import { labelForType, mapMulterFilesToNodemailerAttachments, nowIso, parseBool, saveMediaMessage, toChatId } from './utils';
 import { CHAT_STATUS, ChatDoc, ChatStatus, MessageType, SavedMessageDoc } from './types';
-import { ensureChat, ensureChatByWaChatId, getChatById, saveEmailMessage, saveMessage, updateChatStatus } from './models';
+import { ensureChat, ensureChatByWaChatId, getChatById, saveEmailMessage, saveMessage, updateChatStatus, updateChatTags } from './models';
 import { createImapConfigCopy, createTransporter, saveAttachments } from './gmail';
 import { ParsedMail, simpleParser } from 'mailparser';
 import { SendMailOptions, Transporter } from 'nodemailer';
@@ -399,7 +399,7 @@ client.on('message', async (msg: any) => {
         caption: null,
         media: null,
         timestamp: ts,
-        receivedAt: nowIso(),
+        messageAt: nowIso(),
       });
       return;
     }
@@ -434,7 +434,7 @@ client.on('message', async (msg: any) => {
         }
         : null,
       timestamp: ts,
-      receivedAt: nowIso(),
+      messageAt: nowIso(),
     });
   } catch (err) {
     console.error('[ERRO message handler]', err);
@@ -504,7 +504,7 @@ client.on('message_create', async (msg: any) => {
         caption: null,
         media: null,
         timestamp: ts,
-        sentAt: nowIso(),
+        messageAt: nowIso(),
       });
       return;
     }
@@ -543,7 +543,7 @@ client.on('message_create', async (msg: any) => {
         }
         : null,
       timestamp: ts,
-      sentAt: nowIso(),
+      messageAt: nowIso(),
     });
   } catch (err) {
     console.error('[ERRO message_create]', err);
@@ -679,7 +679,6 @@ function startHttpServer(): void {
       }
       const chatRefId = new ObjectId(String(id));
 
-      const limit = Math.min(Number(req.query.limit) || 50, 200);
       const beforeId = req.query.beforeId && ObjectId.isValid(String(req.query.beforeId))
         ? new ObjectId(String(req.query.beforeId))
         : null;
@@ -708,8 +707,7 @@ function startHttpServer(): void {
 
       const items = await db.collection<SavedMessageDoc>('messages')
         .find(filter)
-        .sort({ _id: -1 })
-        .limit(limit)
+        .sort({ messageAt: 1 })
         .toArray();
 
       const nextCursor = items.length ? String(items[items.length - 1]._id) : null;
@@ -717,7 +715,7 @@ function startHttpServer(): void {
       res.json({
         ok: true,
         data: items,
-        pageInfo: { limit, nextCursor },
+        pageInfo: { nextCursor },
         filter,
       });
     } catch (err) {
@@ -726,18 +724,34 @@ function startHttpServer(): void {
     }
   });
 
-  // FINALIZAR CHAT
-  app.post('/chats/:id/finish', async (req: Request, res: Response) => {
+  // ALTERAR STATUS DO CHAT
+  app.patch('/chats/:id/status/:status', async (req: Request, res: Response) => {
     try {
       const id = req.params.id;
+      const status = req.params.status;
       const chat = await getChatById(id);
       if (!chat) return res.status(404).json({ ok: false, error: 'chat_not_found' });
 
-      await updateChatStatus(chat._id!, CHAT_STATUS.FINALIZADO);
-      res.json({ ok: true, data: { _id: chat._id, status: CHAT_STATUS.FINALIZADO } });
+      await updateChatStatus(chat._id!, status as ChatStatus);
+      res.json({ ok: true, data: { _id: chat._id, status: status as ChatStatus } });
     } catch (err) {
-      console.error('[HTTP] /chats/:id/finish', err);
-      res.status(500).json({ ok: false, error: 'failed_finish_chat' });
+      console.error('[HTTP] /chats/:id/status/:status', err);
+      res.status(500).json({ ok: false, error: 'failed update status' });
+    }
+  });
+
+  app.patch('/chats/:id/tags', async (req: Request, res: Response) => {
+    try {
+      const id = req.params.id;
+      const tags = req.body.tags;
+      const chat = await getChatById(id);
+      if (!chat) return res.status(404).json({ ok: false, error: 'chat_not_found' });
+
+      await updateChatTags(chat._id!, tags);
+      res.json({ ok: true, data: { _id: chat._id, tags } });
+    } catch (err) {
+      console.error('[HTTP] /chats/:id/tags', err);
+      res.status(500).json({ ok: false, error: 'filed update tags' });
     }
   });
 
