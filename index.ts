@@ -854,7 +854,7 @@ function startHttpServer(): void {
     }
   });
 
-  app.post('/send', upload.array('attachments'), async (req: Request, res: Response) => {
+  app.post('/email/send', upload.array('attachments'), async (req: Request, res: Response) => {
     try {
       const { to, subject, text } = req.body as { to?: string; subject?: string; text?: string };
       if (!to) return res.status(400).json({ error: 'Campo "to" é obrigatório' });
@@ -881,7 +881,7 @@ function startHttpServer(): void {
     }
   });
 
-  app.post('/reply', upload.array('attachments'), async (req: Request, res: Response) => {
+  app.post('/email/reply', upload.array('attachments'), async (req: Request, res: Response) => {
     try {
       const { uid, messageId, text } = req.body as { uid?: string; messageId?: string; text?: string };
       if (!uid && !messageId) return res.status(400).json({ error: 'Informe "uid" ou "messageId" do e-mail original' });
@@ -942,8 +942,8 @@ function startHttpServer(): void {
 
     transporterGlobal = await createTransporter();
 
-    const imapInbox = await connectImapInboxListener();
-    const imapSent = await connectSentListener();
+    await connectImapInboxListener();
+    await connectSentListener();
   } catch (err) {
     console.error('[BOOT] Erro ao iniciar aplicação:', err);
     process.exit(1);
