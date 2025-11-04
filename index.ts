@@ -355,7 +355,7 @@ client.on('message', async (msg: any) => {
 
     const from = await findSilencedClient(msg.from)
     const to = await findSilencedClient(msg.to)
-    if (from || to) {
+    if (from || to || msg.from === 'status@broadcast' || msg.to === 'status@broadcast') {
       return;
     }
 
