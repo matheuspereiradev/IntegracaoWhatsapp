@@ -2,12 +2,13 @@ import { Db, ObjectId } from "mongodb";
 import { CHAT_STATUS, ChatDoc, ChatStatus, SavedMessageDoc, SilencedClientDoc } from "./types";
 import { getDb } from "./db";
 import { nowIso } from "./utils";
-import { ParsedMail } from "mailparser";
+import { getIo } from './socket';
 
 export async function saveMessage(doc: SavedMessageDoc): Promise<void> {
   try {
     const db: Db = getDb();
     await db.collection('messages').insertOne(doc);
+    await emitNewMessageEvent(doc);
   } catch (err: any) {
     console.error('[DB] Falha ao salvar mensagem:', err?.message || err);
   }
@@ -50,6 +51,7 @@ export async function createChatFromMessage({
     lastMessageAt: firstTs || new Date(),
   };
   const res = await db.collection<ChatDoc>('chats').insertOne(doc);
+  await emitNewChatEvent({ ...doc, _id: res.insertedId } as ChatDoc);
   return { ...doc, _id: res.insertedId };
 }
 
@@ -201,6 +203,7 @@ export async function createEmailChat({
     lastMessageAt: new Date(),
   };
   const res = await db.collection('chats').insertOne(doc);
+  await emitNewChatEvent({ ...doc, _id: res.insertedId } as ChatDoc);
   return { ...doc, _id: res.insertedId } as ChatDoc;
 }
 
@@ -219,6 +222,7 @@ export async function upsertChatOnMessage(chatId: ObjectId | string, opts: { las
 export async function saveMessageDoc(msg: SavedMessageDoc) {
   const db = getDb();
   const r = await db.collection<SavedMessageDoc>('messages').insertOne(msg);
+  await emitNewMessageEvent({ ...msg, _id: r.insertedId } as SavedMessageDoc);
   return { ...msg, _id: r.insertedId } as SavedMessageDoc;
 }
 
@@ -435,4 +439,24 @@ export async function listSilencedClients(limit = 100): Promise<SilencedClientDo
 export async function findSilencedClient(identifier: string): Promise<SilencedClientDoc | null> {
   const db = getDb();
   return db.collection<SilencedClientDoc>('silenced_clients').findOne({ identifier });
+}
+
+async function emitNewMessageEvent(message: SavedMessageDoc): Promise<void> {
+   try {
+    const io = getIo();
+    io.emit('newMessage', message);
+    if (message.chatRefId) io.to(message.chatRefId.toString()).emit('messageCreate', message);
+  } catch (err) {
+    console.warn('[socket] not initialized, message event not emitted');
+  }
+}
+
+async function emitNewChatEvent(chat: ChatDoc): Promise<void> {
+   try {
+    const io = getIo();
+    io.emit('chatCreate', chat);
+    if (chat._id) io.to(String(chat._id)).emit('chatCreate', chat);
+  } catch (err) {
+    console.warn('[socket] not initialized, message event not emitted');
+  }
 }

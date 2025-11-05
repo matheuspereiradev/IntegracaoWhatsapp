@@ -6,7 +6,7 @@ import express, { Request, Response } from 'express';
 import cors from 'cors';
 import multer from 'multer';
 import { ObjectId, Db } from 'mongodb';
-
+import http from 'http';
 // Tipagem do seu módulo db.js (ver db.d.ts)
 import { connect, getDb } from './db';
 import { labelForType, mapMulterFilesToNodemailerAttachments, nowIso, parseBool, saveMediaMessage, toChatId } from './utils';
@@ -15,6 +15,7 @@ import { addSilencedClient, ensureChat, ensureChatByWaChatId, findSilencedClient
 import { createImapConfigCopy, createTransporter, saveAttachments } from './gmail';
 import { ParsedMail, simpleParser } from 'mailparser';
 import { SendMailOptions, Transporter } from 'nodemailer';
+import { initSocket } from './socket';
 const Imap: any = require('node-imap');
 
 // =========================
@@ -615,7 +616,10 @@ process.stdin.on('data', async (chunk: string) => {
 
 function startHttpServer(): void {
   const app = express();
+
   app.use(cors());
+  const server = http.createServer(app);
+  const io = initSocket(server);
   app.use(express.json());
 
   // --- Upload em memória para enviar mídias ---
@@ -986,7 +990,7 @@ function startHttpServer(): void {
     }
   });
 
-  app.listen(Number(process.env.PORT) || 3000, () => {
+  server.listen(Number(process.env.PORT) || 3000, () => {
     console.log(`[HTTP] API escutando em http://localhost:${Number(process.env.PORT) || 3000}`);
   });
 }
