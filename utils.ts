@@ -5,16 +5,17 @@ export function ensureDirSync(dir: string): void {
   fs.mkdirSync(dir, { recursive: true });
 }
 
-export function getBaseDir(name:string): string {
-  const date = new Date();
-  const yyyy = date.getFullYear();
-  const mm = String(date.getMonth() + 1).padStart(2, '0');
-  const dd = String(date.getDate()).padStart(2, '0');
+export function getBaseDir(dir?: string): string {
+  if (dir)
+    return path.join(
+      __dirname,
+      'downloads',
+      dir
+    );
+
   return path.join(
     __dirname,
-    'downloads',
-    `${yyyy}-${mm}-${dd}`,
-    name
+    'downloads'
   );
 }
 
@@ -42,6 +43,7 @@ export function extFromMime(mime: string | undefined): string {
     'audio/mpeg': '.mp3',
     'audio/mp4': '.m4a',
     'audio/aac': '.aac',
+    'audio/ogg; codecs=opus': '.aac',
     'audio/wav': '.wav',
     // Documentos
     'application/pdf': '.pdf',
@@ -69,26 +71,32 @@ export async function saveMediaMessage(msg: any, chat: any, whoLabel: string = '
   }
 
 
-  const baseDir = getBaseDir(sanitizeName(chat.isGroup ? chat.name : whoLabel))
+  const baseDir = getBaseDir()
 
   ensureDirSync(baseDir);
 
   const guessedExt = extFromMime(media.mimetype);
+
+  console.log(media.mimetype)
   const filenameExt = media.filename ? path.extname(media.filename) : '';
   const ext = guessedExt || filenameExt || '';
 
-  const baseName =
+  let baseName =
     sanitizeName(media.filename) ||
     `${msg.id.id.slice(-8)}${ext || ''}` ||
     `arquivo_${Date.now()}${ext || ''}`;
 
-  const filePath = path.join(baseDir, baseName.endsWith(ext) ? baseName : baseName + ext);
+  baseName = `${new Date().getTime()}_whatsapp_${baseName}`
+
+  if (!baseName.endsWith(ext))
+    baseName = baseName + ext
+  const filePath = path.join(baseDir, baseName);
 
   const buffer = Buffer.from(media.data, 'base64');
   fs.writeFileSync(filePath, buffer);
   console.log(`[MÍDIA] Salvo em: ${filePath}`);
 
-  return filePath;
+  return baseName;
 }
 
 export function nowIso(): string {

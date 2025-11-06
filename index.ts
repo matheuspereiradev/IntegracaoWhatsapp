@@ -17,6 +17,9 @@ import { ParsedMail, simpleParser } from 'mailparser';
 import { SendMailOptions, Transporter } from 'nodemailer';
 import { initSocket } from './socket';
 const Imap: any = require('node-imap');
+import path from 'path';
+import fs from 'fs';
+import mime from 'mime-types';
 
 // =========================
 // GLOBAL GMAIL
@@ -431,8 +434,8 @@ client.on('message', async (msg: any) => {
       authorDisplay: who,
       channel: 'whatsapp',
       type,
-      body: null,
-      caption: msg.caption || null,
+      body: msg.rawData.caption,
+      caption: msg.rawData.caption || null,
       media: savedPath
         ? {
           savedPath,
@@ -739,6 +742,48 @@ function startHttpServer(): void {
       res.status(500).json({ ok: false, error: 'failed_list_messages' });
     }
   });
+
+  app.get('/files/:filename', async (req: Request, res: Response) => {
+    const DOWNLOADS_DIR = path.join(__dirname, 'downloads')
+    try {
+      const { filename } = req.params;
+      if (!filename) return res.status(400).json({ ok: false, error: 'missing_filename' });
+
+      // previne path traversal
+      const filePath = path.join(DOWNLOADS_DIR, filename);
+      const normalized = path.normalize(filePath);
+
+      if (!normalized.startsWith(path.normalize(DOWNLOADS_DIR) + path.sep) && normalized !== path.normalize(DOWNLOADS_DIR)) {
+        return res.status(400).json({ ok: false, error: 'invalid_filename' });
+      }
+
+      // verifica se existe
+      if (!fs.existsSync(normalized)) {
+        return res.status(404).json({ ok: false, error: 'file_not_found' });
+      }
+
+      const stat = fs.statSync(normalized);
+      if (!stat.isFile()) return res.status(404).json({ ok: false, error: 'not_a_file' });
+
+      // detecta content-type
+      const contentType = mime.lookup(normalized) || 'application/octet-stream';
+      res.setHeader('Content-Type', contentType);
+      // força download se desejar (descomente):
+      // res.setHeader('Content-Disposition', `attachment; filename="${path.basename(normalized)}"`);
+
+      // streaming do arquivo (bom para arquivos grandes)
+      const stream = fs.createReadStream(normalized);
+      stream.on('error', (err) => {
+        console.error('[DOWNLOAD STREAM ERROR]', err);
+        if (!res.headersSent) res.status(500).json({ ok: false, error: 'file_stream_error' });
+      });
+      stream.pipe(res);
+    } catch (err) {
+      console.error('[HTTP] /downloads/:filename', err);
+      res.status(500).json({ ok: false, error: 'internal_error' });
+    }
+  });
+
 
   // MARCO AS MENSAGENS COMO LIDAS
   app.patch('/chats/:id/read', async (req: Request, res: Response) => {

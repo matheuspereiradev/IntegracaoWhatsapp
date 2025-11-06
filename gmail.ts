@@ -8,13 +8,14 @@ import { AnyObject } from "./types";
 
 export async function saveAttachments(attachments: MailparserAttachment[], uid?: number | string): Promise<string[]> {
     if (!attachments || !attachments.length) return [];
-    const baseDir = getBaseDir(sanitizeName('email-attachments'));
+    const baseDir = getBaseDir();
     ensureDirSync(baseDir);
     const saved: string[] = [];
     const timestamp = Date.now();
     for (const att of attachments) {
-        const safeName = (att.filename || 'sem-nome').replace(/[/\\?%*:|"<>]/g, '_');
-        const filename = `${uid ?? 'no-uid'}_${timestamp}_${safeName}`;
+        const safeName = sanitizeName(att.filename || 'midia');
+        
+        const filename = `${timestamp}_email_${safeName}`;
         const filepath = path.join(baseDir, filename);
         try {
             if (att.content) {
@@ -34,8 +35,8 @@ export async function saveAttachments(attachments: MailparserAttachment[], uid?:
                 console.warn(`[ANEXOS] não foi possível salvar anexo sem conteúdo: ${safeName}`);
                 continue;
             }
-            saved.push(filepath);
-            console.log(`[ANEXOS] salvo: ${filepath}`);
+            saved.push(filename);
+            console.log(`[ANEXOS] salvo: ${filename}`);
         } catch (e) {
             console.error(`[ANEXOS] erro ao salvar anexo ${safeName}:`, e);
         }

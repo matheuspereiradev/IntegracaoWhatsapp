@@ -110,7 +110,7 @@ export async function ensureChat({
 
   const title: string | null = isGroup
     ? chat.name
-    : (contact?.pushname || contact?.name || contact?.number || null);
+    : (contact?.name || contact?.pushname || contact?.number || null);
 
   const participants: string[] = [];
   if (isGroup) {
