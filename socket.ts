@@ -1,5 +1,6 @@
 import { Server as IOServer } from 'socket.io';
 import http from 'http';
+import { setHasNotReadMessagesOnChat } from './models';
 
 let io: IOServer | null = null;
 

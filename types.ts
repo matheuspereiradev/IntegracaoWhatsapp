@@ -83,6 +83,7 @@ export interface ChatDoc {
 
   createdAt: string;
   updatedAt: string;
+  hasNotReadMessages: boolean;
   lastMessageAt: Date;
 }
 

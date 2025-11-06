@@ -8,6 +8,8 @@ export async function saveMessage(doc: SavedMessageDoc): Promise<void> {
   try {
     const db: Db = getDb();
     await db.collection('messages').insertOne(doc);
+    if (doc.direction === 'inbound')
+      await setHasNotReadMessagesOnChat(doc.chatRefId, true);
     await emitNewMessageEvent(doc);
   } catch (err: any) {
     console.error('[DB] Falha ao salvar mensagem:', err?.message || err);
@@ -45,6 +47,7 @@ export async function createChatFromMessage({
     title: title || null,
     tags: [],
     participants,
+    hasNotReadMessages: true,
     status: initialStatus || CHAT_STATUS.NOVO,
     createdAt: nowIso(),
     updatedAt: nowIso(),
@@ -61,6 +64,7 @@ export async function updateChatStatus(chatId: ObjectId | string, newStatus: Cha
     { _id: new ObjectId(String(chatId)) },
     { $set: { status: newStatus, updatedAt: nowIso() } }
   );
+  await emitChatUpdatedEvent(chatId)
 }
 
 export async function updateChatTags(chatId: ObjectId | string, tags: string[]): Promise<void> {
@@ -69,6 +73,15 @@ export async function updateChatTags(chatId: ObjectId | string, tags: string[]):
     { _id: new ObjectId(String(chatId)) },
     { $set: { tags, updatedAt: nowIso() } }
   );
+}
+
+export async function setHasNotReadMessagesOnChat(chatId: ObjectId | string, value: boolean): Promise<void> {
+  const db: Db = getDb();
+  await db.collection('chats').updateOne(
+    { _id: new ObjectId(String(chatId)) },
+    { $set: { hasNotReadMessages: value, updatedAt: nowIso() } }
+  );
+  await emitChatUpdatedEvent(chatId)
 }
 
 export async function touchChat(chatId: ObjectId | string, ts: Date): Promise<void> {
@@ -192,6 +205,7 @@ export async function createEmailChat({
     channel: 'email',
     isGroup: false,
     tags: [],
+    hasNotReadMessages: true,
     title: title || emailPeer || threadId || null,
     participants: participants.length ? participants : (emailPeer ? [emailPeer] : []),
     status: initialStatus,
@@ -223,6 +237,8 @@ export async function saveMessageDoc(msg: SavedMessageDoc) {
   const db = getDb();
   const r = await db.collection<SavedMessageDoc>('messages').insertOne(msg);
   await emitNewMessageEvent({ ...msg, _id: r.insertedId } as SavedMessageDoc);
+  if (msg.direction === 'inbound')
+    await setHasNotReadMessagesOnChat(msg.chatRefId, true);
   return { ...msg, _id: r.insertedId } as SavedMessageDoc;
 }
 
@@ -442,7 +458,7 @@ export async function findSilencedClient(identifier: string): Promise<SilencedCl
 }
 
 async function emitNewMessageEvent(message: SavedMessageDoc): Promise<void> {
-   try {
+  try {
     const io = getIo();
     io.emit('newMessage', message);
     if (message.chatRefId) io.to(message.chatRefId.toString()).emit('messageCreate', message);
@@ -452,10 +468,24 @@ async function emitNewMessageEvent(message: SavedMessageDoc): Promise<void> {
 }
 
 async function emitNewChatEvent(chat: ChatDoc): Promise<void> {
-   try {
+  try {
     const io = getIo();
     io.emit('chatCreate', chat);
-    if (chat._id) io.to(String(chat._id)).emit('chatCreate', chat);
+  } catch (err) {
+    console.warn('[socket] not initialized, message event not emitted');
+  }
+}
+
+async function emitChatUpdatedEvent(chatId: ObjectId | string): Promise<void> {
+  const db: Db = getDb();
+  const chat = await db.collection<ChatDoc>('chats').findOne({
+    _id: new ObjectId(String(chatId))
+  });
+  console.log(chatId,">>>",chat)
+  try {
+    const io = getIo();
+    io.emit('chatUpdated', chat);
+    // if (chatId) io.to(String(chatId)).emit('chatUpdated', chat);
   } catch (err) {
     console.warn('[socket] not initialized, message event not emitted');
   }

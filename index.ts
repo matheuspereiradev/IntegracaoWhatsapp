@@ -11,7 +11,7 @@ import http from 'http';
 import { connect, getDb } from './db';
 import { labelForType, mapMulterFilesToNodemailerAttachments, nowIso, parseBool, saveMediaMessage, toChatId } from './utils';
 import { CHAT_STATUS, ChatDoc, ChatStatus, MessageType, SavedMessageDoc } from './types';
-import { addSilencedClient, ensureChat, ensureChatByWaChatId, findSilencedClient, getChatById, listSilencedClients, removeSilencedClient, saveEmailMessage, saveMessage, updateChatStatus, updateChatTags } from './models';
+import { addSilencedClient, ensureChat, ensureChatByWaChatId, findSilencedClient, getChatById, listSilencedClients, removeSilencedClient, saveEmailMessage, saveMessage, setHasNotReadMessagesOnChat, updateChatStatus, updateChatTags } from './models';
 import { createImapConfigCopy, createTransporter, saveAttachments } from './gmail';
 import { ParsedMail, simpleParser } from 'mailparser';
 import { SendMailOptions, Transporter } from 'nodemailer';
@@ -740,11 +740,27 @@ function startHttpServer(): void {
     }
   });
 
-  // ALTERAR STATUS DO CHAT
-  app.patch('/chats/:id/status/:status', async (req: Request, res: Response) => {
+  // MARCO AS MENSAGENS COMO LIDAS
+  app.patch('/chats/:id/read', async (req: Request, res: Response) => {
+
     try {
       const id = req.params.id;
-      const status = req.params.status;
+      const chat = await getChatById(id);
+      if (!chat) return res.status(404).json({ ok: false, error: 'chat_not_found' });
+      console.log(id)
+
+      await setHasNotReadMessagesOnChat(id, false);
+      res.json({ ok: true, data: { _id: chat._id } });
+    } catch (err) {
+      console.error('[HTTP] /chats/:id/read', err);
+      res.status(500).json({ ok: false, error: 'failed update read' });
+    }
+  });
+
+  app.patch('/chats/:id/status', async (req: Request, res: Response) => {
+    try {
+      const id = req.params.id;
+      const status = req.body.status;
       const chat = await getChatById(id);
       if (!chat) return res.status(404).json({ ok: false, error: 'chat_not_found' });
 
