@@ -59,9 +59,6 @@ export interface EmailMessageDetails {
   bodyHtml?: string | null;     // corpo HTML (se extraído)
   attachments?: Array<{
     filename: string;
-    savedPath: string;          // onde o anexo foi salvo
-    mimeType: string;
-    size?: number;              // bytes
   }>;
 }
 

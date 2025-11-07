@@ -297,9 +297,11 @@ function mapAttachment(a: any) {
 export async function saveEmailMessage({
   parsed,
   direction,
+  files
 }: {
   parsed: any; // ParsedMail, mas mantemos `any` aqui para flexibilidade com simpleParser
   direction: "inbound" | "outbound";
+  files: string[]
 }) {
   const db = getDb();
 
@@ -408,11 +410,8 @@ export async function saveEmailMessage({
       snippet: (bodyText || "").substring(0, 120),
       bodyText,
       bodyHtml,
-      attachments: attachments.map((a: any) => ({
-        filename: a.filename,
-        savedPath: a.savedPath,
-        mimeType: a.mimeType,
-        size: a.size,
+      attachments: files.map((a) => ({
+        filename: a
       })),
     },
   };

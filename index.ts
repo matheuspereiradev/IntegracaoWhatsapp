@@ -167,7 +167,7 @@ async function connectImapInboxListener(onNewMail?: (args: any) => void): Promis
               const parsed: ParsedMail = await simpleParser(raw);
               const from = parsed.from?.text || (parsed.from?.value?.map((v: any) => v.address).join(', ')) || '(remetente desconhecido)';
               const subject = parsed.subject || '(sem assunto)';
-              const text = parsed.text || parsed.html || '';
+              const text = parsed.text || '';
               const attachmentsCount = parsed.attachments ? parsed.attachments.length : 0;
               const messageId = parsed.messageId || (attributes && attributes['uid']) || 'unknown';
               const uid = attributes && attributes.uid;
@@ -184,17 +184,17 @@ async function connectImapInboxListener(onNewMail?: (args: any) => void): Promis
               console.log('Corpo (texto curto):', (text && (text as string).substring(0, 1000)) || '(vazio)');
               console.log('Quantidade de anexos:', attachmentsCount);
               console.log('----------------------------');
-
+              let files:string[] = []
               if (attachmentsCount > 0 && parsed.attachments) {
                 try {
-                  await saveAttachments(parsed.attachments, uid);
+                  files = await saveAttachments(parsed.attachments, uid);
                 } catch (e) {
                   console.error('[IMAP-INBOX/ANEXOS] erro ao salvar anexos:', e);
                 }
               }
 
               try {
-                await saveEmailMessage({ parsed, direction: "inbound" });
+                await saveEmailMessage({ parsed, direction: "inbound", files });
               } catch (err) {
                 console.error("[IMAP-INBOX] erro ao salvar email no banco:", err);
               }
@@ -313,18 +313,20 @@ async function connectSentListener(): Promise<any> {
               const uid = attributes && attributes.uid;
               const messageId = parsed.messageId || '(sem message-id)';
 
-              try {
-                await saveEmailMessage({ parsed, direction: "outbound" });
-              } catch (err) {
-                console.error("[IMAP-SENT] erro ao salvar email no banco:", err);
-              }
+              let files: string[] = []
 
               if (attachmentsCount > 0 && parsed.attachments) {
                 try {
-                  await saveAttachments(parsed.attachments, uid);
+                  files = await saveAttachments(parsed.attachments, uid);
                 } catch (e) {
                   console.error('[IMAP-SENT/ANEXOS] erro ao salvar anexos da mensagem enviada:', e);
                 }
+              }
+
+              try {
+                await saveEmailMessage({ parsed, direction: "outbound", files });
+              } catch (err) {
+                console.error("[IMAP-SENT] erro ao salvar email no banco:", err);
               }
             } catch (e) {
               console.error('[IMAP-SENT] erro ao parsear mensagem enviada:', e);

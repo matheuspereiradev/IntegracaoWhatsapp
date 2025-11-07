@@ -1,5 +1,5 @@
 import path from "path";
-import { ensureDirSync, getBaseDir, sanitizeName } from "./utils";
+import { ensureDirSync, extFromMime, getBaseDir, getExtension, sanitizeName } from "./utils";
 import fs from "fs";
 import nodemailer, { Transporter } from "nodemailer";
 import { simpleParser, ParsedMail, Attachment as MailparserAttachment } from 'mailparser';
@@ -13,10 +13,18 @@ export async function saveAttachments(attachments: MailparserAttachment[], uid?:
     const saved: string[] = [];
     const timestamp = Date.now();
     for (const att of attachments) {
-        const safeName = sanitizeName(att.filename || 'midia');
-        
-        const filename = `${timestamp}_email_${safeName}`;
-        const filepath = path.join(baseDir, filename);
+
+        let baseName =
+            sanitizeName(att.filename || 'midia')
+        const guessedExt = getExtension(att.filename);
+
+        baseName = `${timestamp}_email_${baseName}`
+
+        baseName = baseName + '.' + guessedExt
+
+
+        const filepath = path.join(baseDir, baseName);
+
         try {
             if (att.content) {
                 // content é Buffer geralmente
@@ -32,13 +40,13 @@ export async function saveAttachments(attachments: MailparserAttachment[], uid?:
                     writeStream.on('error', (err) => reject(err));
                 });
             } else {
-                console.warn(`[ANEXOS] não foi possível salvar anexo sem conteúdo: ${safeName}`);
+                console.warn(`[ANEXOS] não foi possível salvar anexo sem conteúdo: ${baseName}`);
                 continue;
             }
-            saved.push(filename);
-            console.log(`[ANEXOS] salvo: ${filename}`);
+            saved.push(baseName);
+            console.log(`[ANEXOS] salvo: ${baseName}`);
         } catch (e) {
-            console.error(`[ANEXOS] erro ao salvar anexo ${safeName}:`, e);
+            console.error(`[ANEXOS] erro ao salvar anexo ${baseName}:`, e);
         }
     }
     return saved;

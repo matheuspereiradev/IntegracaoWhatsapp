@@ -103,6 +103,15 @@ export function nowIso(): string {
   return new Date().toISOString();
 }
 
+export function getExtension(filename?:string) {
+  if(!filename)
+    return ''
+  const idx = filename.lastIndexOf('.');
+  if (idx === -1) return '';            // sem ponto -> sem extensão
+  if (idx === 0) return '';             // ".env" -> arquivo oculto, sem extensão
+  return filename.slice(idx + 1);
+}
+
 export function toChatId(inputPhone?: string | null): string | null {
   if (!inputPhone) return null;
   const digits = String(inputPhone).replace(/[^\d]/g, '');
