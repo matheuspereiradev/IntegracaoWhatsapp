@@ -411,7 +411,7 @@ client.on('message', async (msg: any) => {
         caption: null,
         media: null,
         timestamp: ts,
-        messageAt: nowIso(),
+        messageAt: new Date(ts).toISOString(),
       });
       return;
     }
@@ -446,7 +446,7 @@ client.on('message', async (msg: any) => {
         }
         : null,
       timestamp: ts,
-      messageAt: nowIso(),
+      messageAt: new Date(ts).toISOString(),
     });
   } catch (err) {
     console.error('[ERRO message handler]', err);
@@ -522,7 +522,7 @@ client.on('message_create', async (msg: any) => {
         caption: null,
         media: null,
         timestamp: ts,
-        messageAt: nowIso(),
+        messageAt: new Date(ts).toISOString(),
       });
       return;
     }
@@ -561,7 +561,7 @@ client.on('message_create', async (msg: any) => {
         }
         : null,
       timestamp: ts,
-      messageAt: nowIso(),
+      messageAt: new Date(ts).toISOString(),
     });
   } catch (err) {
     console.error('[ERRO message_create]', err);

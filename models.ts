@@ -16,6 +16,8 @@ export async function saveMessage(doc: SavedMessageDoc): Promise<void> {
   }
 }
 
+
+
 export async function getOpenChatByWaChatId(waChatId: string): Promise<ChatDoc | null> {
   const db: Db = getDb();
   return db.collection<ChatDoc>('chats').findOne({
@@ -233,15 +235,6 @@ export async function upsertChatOnMessage(chatId: ObjectId | string, opts: { las
   await db.collection('chats').updateOne({ _id: new ObjectId(String(chatId)) }, { $set: set });
 }
 
-export async function saveMessageDoc(msg: SavedMessageDoc) {
-  const db = getDb();
-  const r = await db.collection<SavedMessageDoc>('messages').insertOne(msg);
-  await emitNewMessageEvent({ ...msg, _id: r.insertedId } as SavedMessageDoc);
-  if (msg.direction === 'inbound')
-    await setHasNotReadMessagesOnChat(msg.chatRefId, true);
-  return { ...msg, _id: r.insertedId } as SavedMessageDoc;
-}
-
 function extractAddressField(addrField: any): string | null {
   // addrField pode ser undefined | string | { text?: string, value?: Array<{address?,name?}> } | Array<...>
   if (!addrField) return null;
@@ -384,7 +377,7 @@ export async function saveEmailMessage({
     chatRefId: new ObjectId(String(chat._id)),
     direction,
     type: "email",
-    timestamp: new Date(),
+    timestamp: new Date(parsed.date),
     messageAt: new Date().toISOString(),
     isGroup: false,
     chatName: chat.title,
@@ -416,7 +409,7 @@ export async function saveEmailMessage({
     },
   };
 
-  await saveMessageDoc(messageDoc);
+  await saveMessage(messageDoc);
 }
 
 export async function addSilencedClient(identifier: string): Promise<SilencedClientDoc> {
@@ -480,7 +473,7 @@ async function emitChatUpdatedEvent(chatId: ObjectId | string): Promise<void> {
   const chat = await db.collection<ChatDoc>('chats').findOne({
     _id: new ObjectId(String(chatId))
   });
-  console.log(chatId,">>>",chat)
+  console.log(chatId, ">>>", chat)
   try {
     const io = getIo();
     io.emit('chatUpdated', chat);
