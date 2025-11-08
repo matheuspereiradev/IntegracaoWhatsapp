@@ -184,7 +184,7 @@ async function connectImapInboxListener(onNewMail?: (args: any) => void): Promis
               console.log('Corpo (texto curto):', (text && (text as string).substring(0, 1000)) || '(vazio)');
               console.log('Quantidade de anexos:', attachmentsCount);
               console.log('----------------------------');
-              let files:string[] = []
+              let files: string[] = []
               if (attachmentsCount > 0 && parsed.attachments) {
                 try {
                   files = await saveAttachments(parsed.attachments, uid);
@@ -368,8 +368,8 @@ client.on('message', async (msg: any) => {
     if (['notification_template', 'status'].includes(msg.type)) return;
 
     const who: string =
-      contact?.pushname ||
       contact?.name ||
+      contact?.pushname ||
       contact?.number ||
       msg.author ||
       msg.from;
@@ -476,8 +476,8 @@ client.on('message_create', async (msg: any) => {
     } else {
       const contato = await chat.getContact();
       destinoNome =
-        contato?.pushname ||
         contato?.name ||
+        contato?.pushname ||
         contato?.number ||
         msg.to;
     }
