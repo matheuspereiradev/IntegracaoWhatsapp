@@ -82,6 +82,7 @@ export interface ChatDoc {
   updatedAt: string;
   hasNotReadMessages: boolean;
   lastMessageAt: Date;
+  emergencyLevel: '' | 'Crítico' | 'Desastre' | 'Alto' | 'Médio' | 'Baixo'
 }
 
 export interface SavedMessageDoc {

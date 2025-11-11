@@ -436,7 +436,7 @@ client.on('message', async (msg: any) => {
       authorDisplay: who,
       channel: 'whatsapp',
       type,
-      body: msg.rawData.caption,
+      body: type === 'sticker' ? '[💟 sticker]' : msg.rawData.caption,
       caption: msg.rawData.caption || null,
       media: savedPath
         ? {

@@ -45,6 +45,7 @@ export async function createChatFromMessage({
   const doc: ChatDoc = {
     waChatId,
     channel: 'whatsapp',
+    emergencyLevel: '',
     isGroup: !!isGroup,
     title: title || null,
     tags: [],
@@ -205,6 +206,7 @@ export async function createEmailChat({
   const db = getDb();
   const doc: ChatDoc = {
     channel: 'email',
+    emergencyLevel: '',
     isGroup: false,
     tags: [],
     hasNotReadMessages: true,
@@ -473,7 +475,6 @@ async function emitChatUpdatedEvent(chatId: ObjectId | string): Promise<void> {
   const chat = await db.collection<ChatDoc>('chats').findOne({
     _id: new ObjectId(String(chatId))
   });
-  console.log(chatId, ">>>", chat)
   try {
     const io = getIo();
     io.emit('chatUpdated', chat);
